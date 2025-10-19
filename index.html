@@ -419,23 +419,28 @@
     }
 
     function renderClinicalExtras(meta){
-      const cont = document.getElementById('clinExtra'); cont.innerHTML = "";
+      const cont = document.getElementById('clinExtra'); 
+      cont.innerHTML = "";
+
       const vars = new Set(meta.formula_vars || []);
+      const fs   = meta.factor_spec || {};
+      const has = (name) => vars.has(name) || Object.prototype.hasOwnProperty.call(fs, name);
 
   // 기본 임상 항목 가시성
-      document.getElementById('row_mydriasis').style.display = vars.has("arr_pp_size") ? "" : "none";
-      document.getElementById('row_nonreactive').style.display = vars.has("arr_pp_prompt") ? "" : "none";
-      document.getElementById('row_ais').style.display        = vars.has("head_neck_AIS")  ? "" : "none";
+      document.getElementById('row_mydriasis').style.display = has("arr_pp_size")   ? "" : "none";
+      document.getElementById('row_nonreactive').style.display = has("arr_pp_prompt") ? "" : "none";
+      document.getElementById('row_ais').style.display        = has("head_neck_AIS")  ? "" : "none";
 
-  // ★ Quadriplegia: 메타에 없더라도 3m/6m/12m이면 강제 노출
-      const outcome = normalizeOutcome();
-      const needQPL = ['3m','6m','12m'].includes(outcome) || vars.has("Upper_Lower_Extremities_imputed");
-      if (needQPL){
+  // ★ Quadriplegia는 모델에 있을 때만 렌더
+      if (has("Upper_Lower_Extremities_imputed")){
         const row = document.createElement("div"); row.className="row";
-        const lab = document.createElement("label"); lab.textContent = DISPLAY_NAME["Upper_Lower_Extremities_imputed"];
+        const lab = document.createElement("label"); lab.textContent = "Quadriplegia";
         const sel = document.createElement("select"); sel.id="qpl";
-        sel.innerHTML = `<option value="">Select…</option><option value="yes">Yes</option><option value="no">No</option>`;
-        row.appendChild(lab); row.appendChild(sel); cont.appendChild(row);
+        sel.innerHTML = `<option value="">Select…</option>
+                         <option value="yes">Yes</option>
+                         <option value="no">No</option>`;
+        row.appendChild(lab); row.appendChild(sel); 
+        cont.appendChild(row);
       }
     }
 
@@ -553,8 +558,12 @@
       }
 
   // ★ Quadriplegia: 3m/6m/12m이면 메타 여부와 상관없이 반드시 포함
-      const needQPL = ['3m','6m','12m'].includes(outcome) || (window.__formulaVars||[]).includes("Upper_Lower_Extremities_imputed");
-      if (needQPL){
+      const vars = new Set(window.__formulaVars || []);
+      const fs   = window.__factorSpec || {};
+      const hasQPLinModel = vars.has("Upper_Lower_Extremities_imputed") ||
+                            Object.prototype.hasOwnProperty.call(fs, "Upper_Lower_Extremities_imputed");
+
+      if (hasQPLinModel){
         const val = document.getElementById('qpl')?.value || "";
         if (!val) throw new Error("Select Quadriplegia.");
         const mapped = (val === "yes") ? "Both Bilateral" : "Preserved";
