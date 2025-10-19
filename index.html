@@ -351,9 +351,23 @@
     }
 
     async function fetchJSON(url){
-      const r = await fetch(url);
-      if(!r.ok) throw new Error(url+" failed ("+r.status+")");
-      return r.json();
+      const res = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        cache: 'no-store'
+      });
+      const ct = res.headers.get('content-type') || '';
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} (${ct})`);
+      }
+      if (!ct.includes('application/json')) {
+        const txt = await res.text();
+    // 처음 120자만 표시해서 원인 파악
+        throw new Error(`Non-JSON response (${ct}): ${txt.slice(0,120)}`);
+      }
+      return res.json();
     }
 
     function labelOf(varName){
@@ -588,9 +602,20 @@
       const url = `${API}/predict`;
       const res = await fetch(url, {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({model:modelKey, outcome: outcome, data:[row], threshold:thr})
+        headers:{
+          'Content-Type':'application/json',
+          'Accept':'application/json',
+          'ngrok-skip-browser-warning':'true'
+        },
+        body: JSON.stringify({model:modelKey, outcome, data:[row], threshold:thr}),
+        cache: 'no-store'
       });
+      const ct = res.headers.get('content-type') || '';
+      if (!res.ok) throw new Error(`HTTP ${res.status} (${ct})`);
+      if (!ct.includes('application/json')) {
+        const txt = await res.text();
+        throw new Error(`Non-JSON response (${ct}): ${txt.slice(0,120)}`);
+      }
       const out = await res.json();
       if (out.error) {
         const miss = out?.debug?.miss_before?.join(", ") || "";
