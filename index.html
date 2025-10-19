@@ -339,15 +339,17 @@
     }
 
     /* 3m/6m/12m 라벨 변경 */
-    function updateAvailLabel(){
-      const outcome = normalizeOutcome();
+    function updateAvailLabelByMeta(meta){
       const lbl = document.getElementById('lblAvail');
       if (!lbl) return;
-      if (['3m','6m','12m'].includes(outcome)){
-        lbl.textContent = "Is 'Level of Consciousness' and 'Manual Motor Test (Quadriplegia)' available?";
-      } else {
-        lbl.textContent = "Is 'Level of Consciousness' available?";
-      }
+      const vars = new Set(meta.formula_vars || []);
+      const fs   = meta.factor_spec || {};
+      const hasQPL = vars.has("Upper_Lower_Extremities_imputed") ||
+                     Object.prototype.hasOwnProperty.call(fs, "Upper_Lower_Extremities_imputed");
+  // LOC 안내는 유지, QPL은 있을 때만 덧붙임
+      lbl.textContent = hasQPL
+        ? "Is 'Level of Consciousness' and 'Manual Motor Test (Quadriplegia)' available?"
+        : "Is 'Level of Consciousness' available?";
     }
 
     async function fetchJSON(url){
@@ -470,7 +472,7 @@
         renderCtVars(meta);
         renderLabVars();
         renderClinicalExtras(meta);
-
+        updateAvailLabelByMeta(meta);
         restoreForm();
         await maybeHideInjury(key, outcome);
       }catch(e){
