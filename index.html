@@ -5,7 +5,7 @@
   <title>AJOU TBI Prognostic Calculator</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
 
-  <!-- 1) config.json에서 API 주소를 읽어 전역에 저장 -->
+  <!-- 1) config.json에서 API 주소 로드 -->
   <script>
     window.API = "";
     window.configReady = (async () => {
@@ -40,9 +40,7 @@
     .invalid{outline:2px solid #d33}
     .flex-between{display:flex;gap:12px;align-items:center;justify-content:space-between}
     .stack{display:flex;flex-direction:column;gap:4px;flex:1}
-    @media (max-width:720px){
-      label{width:40%}
-    }
+    @media (max-width:720px){ label{width:40%} }
   </style>
 </head>
 <body>
@@ -89,7 +87,6 @@
 
   <div class="card">
     <h3>Clinical variables</h3>
-
     <div class="row">
       <label>Age (years)</label>
       <input id="age" type="number" min="18" max="90" step="1" placeholder="18–90">
@@ -193,9 +190,8 @@
     <div class="muted" id="modelId"></div>
   </div>
 
-  <!-- 2) 메인 스크립트: 반드시 <script> 태그 안에! -->
+  <!-- 2) 메인 스크립트 -->
   <script>
-    // 전역(초기값). init()에서 configReady 대기 후 채웁니다.
     let API = "";
 
     /* ====== 라벨/단위 ====== */
@@ -300,6 +296,35 @@
     }
     function isBaseKey(key){ return /_base$/.test(key) || key === "clinical_base"; }
 
+    /* ====== CT/Lab 변수명 별칭 해결 ====== */
+    const CT_ALIASES = {
+      EDH: ["EDH","Imaging.EDH"],
+      SAH: ["SAH","Imaging.SAH"],
+      IVH: ["IVH","Imaging.IVH"],
+      contusion: ["contusion","Imaging.Contusion","Imaging.contusion"],
+      MidlineShift: ["MidlineShift","Imaging.MidlineShift","Imaging.midlineShift"],
+      basal_cistern_compression: [
+        "basal_cistern_compression","Imaging.CisternalCompression","Imaging.basal_cistern_compression"
+      ],
+      DAI: ["DAI","Imaging.DAI"],
+      facial_fracture: ["facial_fracture","Imaging.FacialFracture","Imaging.facial_fracture"]
+    };
+
+    function resolveServerVar(fs, varsSet, name){
+      const cands = [
+        name,
+        `Imaging.${name}`,
+        `Lab.${name}`,
+        name.charAt(0).toUpperCase()+name.slice(1),
+        `Imaging.${name.charAt(0).toUpperCase()+name.slice(1)}`
+      ];
+      const fromAlias = (CT_ALIASES[name] || []);
+      for (const nm of [...fromAlias, ...cands]) {
+        if ((fs && Object.prototype.hasOwnProperty.call(fs, nm)) || (varsSet && varsSet.has(nm))) return nm;
+      }
+      return null;
+    }
+
     /* 가시성 토글 */
     function applyVisibility(){
       const key = currentKey();
@@ -327,7 +352,7 @@
 
     async function fetchJSON(url){
       const r = await fetch(url);
-      if(!r.ok) throw new Error(url+" failed");
+      if(!r.ok) throw new Error(url+" failed ("+r.status+")");
       return r.json();
     }
 
@@ -340,24 +365,30 @@
     function renderCtVars(meta){
       const cont = document.getElementById('ctVars'); cont.innerHTML = "";
       const fs = meta.factor_spec || {};
-      const vars = new Set(meta.formula_vars || []);
-      // 12m Base에는 facial_fracture가 있고 Alt에는 없음(번들에 따라 자동)
+      const varsSet = new Set(meta.formula_vars || []);
       const CAND = ["EDH","SAH","IVH","contusion","MidlineShift","basal_cistern_compression","DAI","facial_fracture"];
+      let rendered = 0;
       CAND.forEach(v => {
-        if (!(v in fs) && !vars.has(v)) return;
+        const serverName = resolveServerVar(fs, varsSet, v);
+        if (!serverName) return;
         const row = document.createElement("div"); row.className="row";
         const lab = document.createElement("label"); lab.textContent = labelOf(v);
-        const sel = document.createElement("select"); sel.className = "ct-var"; sel.dataset.var = v;
+        const sel = document.createElement("select"); sel.className = "ct-var"; sel.dataset.var = serverName;
         sel.innerHTML = `<option value="">Select…</option><option>Present</option><option>Absent</option>`;
         row.appendChild(lab); row.appendChild(sel); cont.appendChild(row);
+        rendered++;
       });
+      console.log(`[ct] rendered ${rendered} vars`);
     }
 
     function renderLabVars(){
       const cont = document.getElementById('labVars'); cont.innerHTML = "";
       const oc = normalizeOutcome();
       const labs = LABS_BY_OUTCOME[oc] || [];
+      const varsSet = new Set(window.__formulaVars || []);
+      const fs = window.__factorSpec || {};
       labs.forEach(v => {
+        const serverName = resolveServerVar(fs, varsSet, v) || v;
         const row = document.createElement("div"); row.className="row";
         const b = STATIC_BOUNDS[v] || null;
         const unit = UNITS[v] ? ` (${UNITS[v]})` : "";
@@ -365,11 +396,12 @@
         label.textContent = (DISPLAY_NAME[v] || v) + unit + (b?` [${b.min}–${b.max}]`:"");
 
         const inp = document.createElement("input");
-        inp.type="number"; inp.step="any"; inp.className="lab-var"; inp.dataset.var = v;
+        inp.type="number"; inp.step="any"; inp.className="lab-var"; inp.dataset.var = serverName;
         if (b){ inp.min = b.min; inp.max = b.max; inp.placeholder = `${b.min}–${b.max}`; }
 
         row.appendChild(label); row.appendChild(inp); cont.appendChild(row);
       });
+      console.log(`[lab] outcome=${oc}, rendered=${labs.length}`);
     }
 
     function renderClinicalExtras(meta){
@@ -393,18 +425,36 @@
       if (!API) throw new Error("API base URL not set.");
       const key = currentKey();
       const outcome = normalizeOutcome();
-      const meta = await fetchJSON(`${API}/meta?model=${key}&outcome=${outcome}`);
-      if (meta.error) { document.getElementById('metaLine').textContent = meta.error; return; }
-      document.getElementById('metaLine').textContent = `Model: ${meta.model_id} · Target: ${meta.target}`;
-      window.__factorSpec = meta.factor_spec || {};
-      window.__formulaVars = (meta.formula_vars || []).map(v=>String(v));
+      const url = `${API}/meta?model=${key}&outcome=${outcome}`;
+      try{
+        console.log("[meta] GET", url);
+        const meta = await fetchJSON(url);
+        if (meta.error) {
+          document.getElementById('metaLine').textContent = `META ERROR: ${meta.error} (key=${key}, outcome=${outcome})`;
+          console.warn("[meta] server error:", meta);
+          // 그래도 비어있는 블록은 렌더해서 토글 동작은 보이게 함
+          renderCtVars({factor_spec:{}, formula_vars:[]});
+          renderLabVars();
+          return;
+        }
+        document.getElementById('metaLine').textContent = `Model: ${meta.model_id} · Target: ${meta.target}`;
+        window.__factorSpec = meta.factor_spec || {};
+        window.__formulaVars = (meta.formula_vars || []).map(v=>String(v));
+        console.log("[meta] factor_spec keys:", Object.keys(window.__factorSpec));
+        console.log("[meta] formula_vars:", window.__formulaVars);
 
-      renderCtVars(meta);
-      renderLabVars();
-      renderClinicalExtras(meta);
+        renderCtVars(meta);
+        renderLabVars();
+        renderClinicalExtras(meta);
 
-      restoreForm();
-      await maybeHideInjury(key, outcome);
+        restoreForm();
+        await maybeHideInjury(key, outcome);
+      }catch(e){
+        console.error("[meta] fetch failed:", e, "URL:", url);
+        document.getElementById('metaLine').textContent = `META FETCH FAILED: ${e?.message || e} — ${url}`;
+        renderCtVars({factor_spec:{}, formula_vars:[]});
+        renderLabVars();
+      }
     }
 
     async function maybeHideInjury(key, outcome){
@@ -507,9 +557,8 @@
       if (ctYes && labYes) {
         const labs = LABS_BY_OUTCOME[outcome] || [];
         labs.forEach(name => {
-          const inp = document.querySelector(`.lab-var[data-var="${CSS.escape(name)}"]`);
-          if (!inp) return;
-          const valStr = inp.value;
+          const inp = document.querySelector(`.lab-var[data-var="${CSS.escape(name)}"], .lab-var[data-var="${CSS.escape("Lab."+name)}"]`);
+          const valStr = inp?.value ?? "";
           if (valStr === "") throw new Error(`Enter ${(DISPLAY_NAME[name] || name)}.`);
           const val = Number(valStr);
           if (!isFinite(val)) throw new Error(`Enter ${(DISPLAY_NAME[name] || name)} as a number.`);
@@ -517,20 +566,37 @@
           if (b && (val < b.min || val > b.max)) {
             throw new Error(`${(DISPLAY_NAME[name] || name)} must be within ${b.min}–${b.max}.`);
           }
-          row[name] = val;
+          // 실제 서버 전송명(별칭 고려)
+          const serverName = resolveServerVar(window.__factorSpec, new Set(window.__formulaVars||[]), name) || name;
+          row[serverName] = val;
         });
       }
 
       return row;
     }
 
-    /* ====== 여러 모델 동시 예측 ====== */
+    /* ====== 여러 모델 동시 예측 & 에러 가시화 ====== */
     function keysToRunForCompare(key){
       const base = isBaseKey(key) ? "base" : "alt";
       if (key.startsWith("clinical")) return [ `clinical_${base}` ];
       if (key.startsWith("ct"))       return [ `clinical_${base}`, `ct_${base}` ];
       if (key.startsWith("full"))     return [ `clinical_${base}`, `ct_${base}`, `full_${base}` ];
       return [ `clinical_${base}` ];
+    }
+
+    async function runPredict(modelKey, outcome, row, thr){
+      const url = `${API}/predict`;
+      const res = await fetch(url, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({model:modelKey, outcome: outcome, data:[row], threshold:thr})
+      });
+      const out = await res.json();
+      if (out.error) {
+        const miss = out?.debug?.miss_before?.join(", ") || "";
+        throw new Error(`PREDICT ERROR: ${out.error}${miss ? " — missing: "+miss : ""}`);
+      }
+      return out;
     }
 
     /* ====== 초기화/리프레시 ====== */
@@ -562,7 +628,6 @@
     });
 
     async function init(){
-      // config.json 로드 완료 대기
       await window.configReady;
       API = window.API;
 
@@ -571,12 +636,12 @@
           "API base URL is not set. Check config.json (api_base).";
         return;
       }
-      // HTTPS 확인(혼합콘텐츠 방지). 필요 시 주석 해제해서 경고 가능.
-      // if (!API.startsWith("https://")) {
-      //   document.getElementById('metaLine').textContent =
-      //     "API must be HTTPS when served from GitHub Pages.";
-      //   return;
-      // }
+      // GitHub Pages는 HTTPS이므로, API도 HTTPS 사용 권장
+      if (!API.startsWith("https://")) {
+        document.getElementById('metaLine').textContent =
+          "API must be HTTPS when served from GitHub Pages.";
+        return;
+      }
 
       updateAvailLabel();
       await refreshAll();
@@ -594,12 +659,7 @@
           const order = {clinical_base:1, clinical_alt:1.5, ct_base:2, ct_alt:2.5, full_base:3, full_alt:3.5};
           const results = [];
           for (const k of keys){
-            const res = await fetch(`${API}/predict`, {
-              method:'POST',
-              headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({model:k, outcome: outcome, data:[row], threshold:thr})
-            });
-            const out = await res.json();
+            const out = await runPredict(k, outcome, row, thr);
             const p = out.prob_14d_death?.[0];
             const y = out.pred_0_1?.[0];
             results.push({
