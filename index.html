@@ -338,7 +338,14 @@
       document.querySelector(".lab-block").style.display = (ctYes && labYes) ? "" : "none";
     }
 
-    /* 3m/6m/12m 라벨 변경 */
+    /* (신규) 메타 적용 전 기본 라벨 - ReferenceError 방지용 */
+    function updateAvailLabel(){
+      const lbl = document.getElementById('lblAvail');
+      if (!lbl) return;
+      lbl.textContent = "Is 'Level of Consciousness' available?";
+    }
+
+    /* 3m/6m/12m 라벨 변경(메타 기준) */
     function updateAvailLabelByMeta(meta){
       const lbl = document.getElementById('lblAvail');
       if (!lbl) return;
@@ -346,7 +353,6 @@
       const fs   = meta.factor_spec || {};
       const hasQPL = vars.has("Upper_Lower_Extremities_imputed") ||
                      Object.prototype.hasOwnProperty.call(fs, "Upper_Lower_Extremities_imputed");
-  // LOC 안내는 유지, QPL은 있을 때만 덧붙임
       lbl.textContent = hasQPL
         ? "Is 'Level of Consciousness' and 'Manual Motor Test (Quadriplegia)' available?"
         : "Is 'Level of Consciousness' available?";
@@ -366,7 +372,6 @@
       }
       if (!ct.includes('application/json')) {
         const txt = await res.text();
-    // 처음 120자만 표시해서 원인 파악
         throw new Error(`Non-JSON response (${ct}): ${txt.slice(0,120)}`);
       }
       return res.json();
@@ -428,12 +433,12 @@
       const fs   = meta.factor_spec || {};
       const has = (name) => vars.has(name) || Object.prototype.hasOwnProperty.call(fs, name);
 
-  // 기본 임상 항목 가시성
+      // 기본 임상 항목 가시성
       document.getElementById('row_mydriasis').style.display = has("arr_pp_size")   ? "" : "none";
       document.getElementById('row_nonreactive').style.display = has("arr_pp_prompt") ? "" : "none";
       document.getElementById('row_ais').style.display        = has("head_neck_AIS")  ? "" : "none";
 
-  // ★ Quadriplegia는 모델에 있을 때만 렌더
+      // ★ Quadriplegia는 모델에 있을 때만 렌더 (Alt에 없으면 표시 안 됨)
       if (has("Upper_Lower_Extremities_imputed")){
         const row = document.createElement("div"); row.className="row";
         const lab = document.createElement("label"); lab.textContent = "Quadriplegia";
@@ -458,7 +463,6 @@
         if (meta.error) {
           document.getElementById('metaLine').textContent = `META ERROR: ${meta.error} (key=${key}, outcome=${outcome})`;
           console.warn("[meta] server error:", meta);
-          // 그래도 비어있는 블록은 렌더해서 토글 동작은 보이게 함
           renderCtVars({factor_spec:{}, formula_vars:[]});
           renderLabVars();
           return;
@@ -559,7 +563,7 @@
         if (hasAIS) { if(!ais) throw new Error("Select Head/Neck AIS."); row[MAP_CLINICAL_ALT.ais] = String(ais); }
       }
 
-  // ★ Quadriplegia: 3m/6m/12m이면 메타 여부와 상관없이 반드시 포함
+      // ★ Quadriplegia: "모델에 있을 때만" 포함 (Alt에 없으면 전송 안 함)
       const vars = new Set(window.__formulaVars || []);
       const fs   = window.__factorSpec || {};
       const hasQPLinModel = vars.has("Upper_Lower_Extremities_imputed") ||
@@ -644,9 +648,9 @@
     /* ====== 초기화/리프레시 ====== */
     async function refreshAll(){
       snapshotForm();
-      updateAvailLabel();
+      updateAvailLabel();      // 기본 문구(메타 전)
       applyVisibility();
-      await loadMeta();
+      await loadMeta();        // 메타 반영 후 updateAvailLabelByMeta(meta)에서 최종 문구 덮어씀
       applyVisibility();
     }
 
@@ -678,14 +682,13 @@
           "API base URL is not set. Check config.json (api_base).";
         return;
       }
-      // GitHub Pages는 HTTPS이므로, API도 HTTPS 사용 권장
       if (!API.startsWith("https://")) {
         document.getElementById('metaLine').textContent =
           "API must be HTTPS when served from GitHub Pages.";
         return;
       }
 
-      updateAvailLabel();
+      updateAvailLabel();  // 초기 기본 문구
       await refreshAll();
 
       document.getElementById('predictBtn').addEventListener('click', async ()=>{
